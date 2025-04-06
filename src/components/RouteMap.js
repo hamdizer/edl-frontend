@@ -1,130 +1,154 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   MapContainer,
   TileLayer,
   Marker,
   Popup,
   Polyline,
+  useMap,
 } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import polyline from "@mapbox/polyline";
 import L from "leaflet";
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
+
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
+});
+const FitBounds = ({ bounds }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (bounds && bounds.length > 0) {
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  }, [bounds, map]);
+  return null;
+};
 
 const RouteMap = ({ routeData }) => {
-  const [mapData, setMapData] = useState({
-    firstLegLayer: null,
-    secondLegLayer: null,
-    markers: [],
-    bounds: null,
-  });
+  const [firstLegCoords, setFirstLegCoords] = useState([]);
+  const [secondLegCoords, setSecondLegCoords] = useState([]);
+  const [markers, setMarkers] = useState([]);
+  const [bounds, setBounds] = useState(null);
+
+  const geocodeLocation = async (location) => {
+    const apiKey = "5b3ce3597851110001cf6248f6083129c02d4805b29e8f82e8a23494";
+    const url = `https://api.openrouteservice.org/geocode/search?api_key=${apiKey}&text=${encodeURIComponent(
+      location
+    )}`;
+
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data && data.features?.length > 0) {
+        return data.features[0].geometry.coordinates.reverse(); // [lat, lng]
+      } else {
+        console.warn("Location not found:", location);
+        return null;
+      }
+    } catch (error) {
+      console.error("Error during geocoding:", error);
+      return null;
+    }
+  };
 
   useEffect(() => {
-    if (!routeData || !routeData.legs || routeData.legs.length < 2) return;
+    const fetchData = async () => {
+      if (!routeData?.legs || routeData.legs.length < 2) return;
 
-    const addLegLayer = (geometry, color) => {
-      if (!geometry || geometry.length === 0) return null;
-      const latLngs = geometry.map((coord) => [coord[1], coord[0]]);
-      const polyline = L.polyline(latLngs, { color, weight: 5 });
-      return polyline;
+      const firstLeg =
+        polyline.decode(routeData.legs[0]?.routes[0]?.geometry) || [];
+      const secondLeg =
+        polyline.decode(routeData.legs[1]?.routes[0]?.geometry) || [];
+
+      const [startCoord, pickupCoord, dropoffCoord] = await Promise.all([
+        geocodeLocation(routeData.current_location),
+        geocodeLocation(routeData.pickup_location),
+        geocodeLocation(routeData.dropoff_location),
+      ]);
+
+      const allCoords = [...firstLeg, ...secondLeg];
+      setBounds(allCoords);
+
+      setFirstLegCoords(firstLeg);
+      setSecondLegCoords(secondLeg);
+
+      const newMarkers = [];
+
+      if (startCoord) {
+        newMarkers.push({
+          position: startCoord,
+          label: "Start",
+          description: routeData.current_location,
+        });
+      }
+
+      if (pickupCoord) {
+        newMarkers.push({
+          position: pickupCoord,
+          label: "Pickup",
+          description: routeData.pickup_location,
+        });
+      }
+
+      if (dropoffCoord) {
+        newMarkers.push({
+          position: dropoffCoord,
+          label: "Dropoff",
+          description: routeData.dropoff_location,
+        });
+      }
+
+      setMarkers(newMarkers);
     };
 
-    const addMarker = (coordinates, color, label, description) => {
-      if (!coordinates || coordinates.length === 0) return null;
-      const marker = L.marker([coordinates[1], coordinates[0]], {
-        icon: L.divIcon({
-          className: "leaflet-div-icon",
-          html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 50%;"></div>`,
-        }),
-      });
-
-      marker.bindPopup(`
-        <h3>${label}</h3>
-        <p>${description}</p>
-      `);
-      return marker;
-    };
-
-    const firstLeg = routeData.legs[0]?.routes[0]?.geometry?.coordinates;
-    const secondLeg = routeData.legs[1]?.routes[0]?.geometry?.coordinates;
-
-    const startCoordinates = routeData.current_location
-      ?.split(",")
-      ?.map((loc) => loc.trim());
-    const pickupCoordinates = routeData.pickup_location
-      ?.split(",")
-      ?.map((loc) => loc.trim());
-    const dropoffCoordinates = routeData.dropoff_location
-      ?.split(",")
-      ?.map((loc) => loc.trim());
-
-    if (
-      !firstLeg ||
-      !secondLeg ||
-      !startCoordinates ||
-      !pickupCoordinates ||
-      !dropoffCoordinates
-    )
-      return;
-
-    const bounds = L.latLngBounds([
-      ...firstLeg.map((coord) => [coord[1], coord[0]]),
-      ...secondLeg.map((coord) => [coord[1], coord[0]]),
-    ]);
-
-    const firstLegLayer = addLegLayer(firstLeg, "#3b82f6");
-    const secondLegLayer = addLegLayer(secondLeg, "#8b5cf6");
-
-    const markers = [
-      addMarker(
-        startCoordinates,
-        "#10b981",
-        "Start",
-        routeData.current_location
-      ),
-      addMarker(
-        pickupCoordinates,
-        "#f59e0b",
-        "Pickup",
-        routeData.pickup_location
-      ),
-      addMarker(
-        dropoffCoordinates,
-        "#ef4444",
-        "Dropoff",
-        routeData.dropoff_location
-      ),
-    ];
-
-    setMapData({
-      firstLegLayer,
-      secondLegLayer,
-      markers,
-      bounds,
-    });
+    fetchData();
   }, [routeData]);
+
+  const isReady = markers.length >= 2 && bounds;
+
+  if (!isReady) {
+    return <div className="text-gray-500 p-4">Loading route map...</div>;
+  }
 
   return (
     <div className="w-full h-96 rounded-lg overflow-hidden">
       <MapContainer
         className="w-full h-full"
-        center={routeData?.current_location ? [51.505, -0.09] : [51.505, -0.09]}
-        zoom={5}
-        bounds={mapData.bounds}
-        whenCreated={(map) => {
-          if (mapData.bounds) {
-            map.fitBounds(mapData.bounds, { padding: [50, 50] });
-          }
-        }}
+        center={markers[0].position}
+        zoom={13}
+        scrollWheelZoom={true}
       >
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        {mapData.firstLegLayer}
-        {mapData.secondLegLayer}
-        {mapData.markers.map(
-          (marker, index) =>
-            marker && (
-              <Marker key={index} position={marker.getLatLng()}>
-                {marker.getPopup()}
-              </Marker>
-            )
+        <FitBounds bounds={bounds} />
+
+        {firstLegCoords.length > 0 && (
+          <Polyline
+            positions={firstLegCoords}
+            pathOptions={{ color: "#3b82f6" }}
+          />
         )}
+        {secondLegCoords.length > 0 && (
+          <Polyline
+            positions={secondLegCoords}
+            pathOptions={{ color: "#8b5cf6" }}
+          />
+        )}
+
+        {markers.map((marker, idx) => (
+          <Marker key={idx} position={marker.position}>
+            <Popup>
+              <strong>{marker.label}</strong>
+              <br />
+              {marker.description}
+            </Popup>
+          </Marker>
+        ))}
       </MapContainer>
     </div>
   );
