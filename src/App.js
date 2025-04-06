@@ -6,9 +6,6 @@ import LogSheet from "./components/LogSheet";
 
 function App() {
   const [tripData, setTripData] = React.useState();
-  useEffect(() => {
-    console.log("datatrip", tripData);
-  }, [setTripData]);
 
   return (
     <BrowserRouter>
